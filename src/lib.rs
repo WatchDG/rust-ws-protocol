@@ -7,9 +7,89 @@ pub use base64::B64Encode;
 pub use base64::B64;
 use rand::Rng;
 
+macro_rules! get_fin {
+    ($a: expr) => {
+        ($a >> 7) & 0b1
+    };
+}
+
+macro_rules! get_fin_enum {
+    ($a: expr) => {
+        match $a {
+            0 => FIN::NotFinal,
+            1 => FIN::Final,
+            _ => panic!(),
+        }
+    };
+}
+
+macro_rules! get_fin_enum_value {
+    ($a: expr) => {
+        match $a {
+            FIN::NotFinal => 0,
+            FIN::Final => 1,
+            _ => panic!(),
+        }
+    };
+}
+
+macro_rules! get_opcode {
+    ($a: expr) => {
+        $a & 0b1111
+    };
+}
+
+macro_rules! get_opcode_enum {
+    ($a: expr) => {
+        match $a {
+            0x0 => OPCODE::Fragment,
+            0x1 => OPCODE::Txt,
+            0x2 => OPCODE::Bin,
+            0x3 => OPCODE::Rsv10,
+            0x4 => OPCODE::Rsv11,
+            0x5 => OPCODE::Rsv12,
+            0x6 => OPCODE::Rsv13,
+            0x7 => OPCODE::Rsv14,
+            0x8 => OPCODE::Close,
+            0x9 => OPCODE::Ping,
+            0xA => OPCODE::Pong,
+            0xB => OPCODE::Rsv20,
+            0xC => OPCODE::Rsv21,
+            0xD => OPCODE::Rsv22,
+            0xE => OPCODE::Rsv23,
+            0xF => OPCODE::Rsv24,
+            _ => panic!(),
+        }
+    };
+}
+
+macro_rules! get_opcode_enum_value {
+    ($a: expr) => {
+        match $a {
+            OPCODE::Fragment => 0x0,
+            OPCODE::Txt => 0x1,
+            OPCODE::Bin => 0x2,
+            OPCODE::Rsv10 => 0x3,
+            OPCODE::Rsv11 => 0x4,
+            OPCODE::Rsv12 => 0x5,
+            OPCODE::Rsv13 => 0x6,
+            OPCODE::Rsv14 => 0x7,
+            OPCODE::Close => 0x8,
+            OPCODE::Ping => 0x9,
+            OPCODE::Pong => 0xA,
+            OPCODE::Rsv20 => 0xB,
+            OPCODE::Rsv21 => 0xC,
+            OPCODE::Rsv22 => 0xD,
+            OPCODE::Rsv23 => 0xE,
+            OPCODE::Rsv24 => 0xF,
+            _ => panic!(),
+        }
+    };
+}
+
 macro_rules! get_payload_length {
     ($a: expr) => {
-        ($a & 0b1111111) as usize
+        ($a & 0b_0111_1111) as usize
     };
 }
 
@@ -36,6 +116,32 @@ macro_rules! is_masked {
     ($a: expr) => {
         $a >> 7 == 1
     };
+}
+
+#[derive(Debug, PartialEq)]
+pub enum OPCODE {
+    Fragment,
+    Txt,
+    Bin,
+    Rsv10,
+    Rsv11,
+    Rsv12,
+    Rsv13,
+    Rsv14,
+    Close,
+    Ping,
+    Pong,
+    Rsv20,
+    Rsv21,
+    Rsv22,
+    Rsv23,
+    Rsv24,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FIN {
+    NotFinal,
+    Final,
 }
 
 pub fn gen_mask() -> [u8; 4] {
@@ -74,6 +180,49 @@ pub struct Frame {
 }
 
 impl Frame {
+    pub fn new(fin: FIN, opcode: OPCODE, data: &[u8]) -> Frame {
+        let fin_rsv_opcode: u8 = (get_fin_enum_value!(fin) << 7) | (get_opcode_enum_value!(opcode));
+        let payload_length: Vec<u8>;
+
+        let mask_payload_length: u8 = match data.len() {
+            len if len > 125 && len <= (u16::MAX as usize) => {
+                payload_length = vec![(len >> 8 & 0b_1111_1111) as u8, (len & 0b_1111_1111) as u8];
+                126u8
+            }
+            len if len > (u16::MAX as usize) => {
+                payload_length = vec![
+                    (len >> 56 & 0b_1111_1111) as u8,
+                    (len >> 48 & 0b_1111_1111) as u8,
+                    (len >> 40 & 0b_1111_1111) as u8,
+                    (len >> 32 & 0b_1111_1111) as u8,
+                    (len >> 24 & 0b_1111_1111) as u8,
+                    (len >> 16 & 0b_1111_1111) as u8,
+                    (len >> 8 & 0b_1111_1111) as u8,
+                    (len & 0b_1111_1111) as u8,
+                ];
+                127u8
+            }
+            len => {
+                payload_length = vec![];
+                len as u8
+            }
+        };
+        let payload = data.to_vec();
+
+        Frame {
+            fin_rsv_opcode,
+            mask_payload_length,
+            payload_length,
+            mask: None,
+            payload,
+        }
+    }
+    pub fn fin(&self) -> FIN {
+        get_fin_enum!(get_fin!(self.fin_rsv_opcode))
+    }
+    pub fn opcode(&self) -> OPCODE {
+        get_opcode_enum!(get_opcode!(self.fin_rsv_opcode))
+    }
     pub fn masking(&mut self, mask: &[u8; 4]) {
         if let Some(mask_) = self.mask {
             if mask_ != *mask {
@@ -85,6 +234,7 @@ impl Frame {
                 self.payload[i] ^= mask[i % 4];
             }
             self.mask = Some(*mask);
+            self.mask_payload_length ^= 0b_1000_0000;
         }
     }
     pub fn unmasking(&mut self) {
@@ -93,6 +243,7 @@ impl Frame {
                 self.payload[i] ^= mask[i % 4];
             }
             self.mask = None;
+            self.mask_payload_length &= 0b_0111_1111;
         }
     }
     pub fn to_vec(&self) -> Vec<u8> {
