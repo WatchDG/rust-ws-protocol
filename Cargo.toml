@@ -1,0 +1,20 @@
+[package]
+name = "ws-protocol"
+version = "0.1.0"
+authors = ["WatchDG <baranov@w3m.co>"]
+license = "MIT OR Apache-2.0"
+description = "websocket protocol"
+homepage = "https://github.com/WatchDG/rust-ws-protocol"
+documentation = "https://docs.rs/ws-protocol"
+repository = "https://github.com/WatchDG/rust-ws-protocol"
+readme = "README.md"
+edition = "2018"
+exclude = [
+    ".github/**/*",
+    "src/main.rs",
+    ".gitignore"
+]
+
+[dependencies]
+rand = "0.8.3"
+sha1 = "0.6"
